@@ -1,12 +1,17 @@
 package nachos.threads;
 
 import nachos.machine.*;
-
+import java.util.LinkedList;
+import java.util.PriorityQueue;
 /**
  * Uses the hardware timer to provide preemption, and to allow threads to sleep
  * until a certain time.
  */
 public class Alarm {
+	
+	private PriorityQueue<Long> wakeTimeQueue;
+	private LinkedList<KThread> sleepingThreads;
+	
     /**
      * Allocate a new Alarm. Set the machine's timer interrupt handler to this
      * alarm's callback.
@@ -14,22 +19,42 @@ public class Alarm {
      * <p><b>Note</b>: Nachos will not function correctly with more than one
      * alarm.
      */
-    public Alarm() {
-	Machine.timer().setInterruptHandler(new Runnable() {
-		public void run() { timerInterrupt(); }
-	    });
-    }
-
+	
+	public Alarm() {
+		wakeTimeQueue = new PriorityQueue<>();
+		sleepingThreads = new LinkedList<>();
+        
+		Machine.timer().setInterruptHandler(new Runnable() {
+			public void run() { timerInterrupt(); }
+		});
+	}
+	
     /**
      * The timer interrupt handler. This is called by the machine's timer
      * periodically (approximately every 500 clock ticks). Causes the current
      * thread to yield, forcing a context switch if there is another thread
      * that should be run.
      */
-    public void timerInterrupt() {
-	KThread.currentThread().yield();
-    }
+	
+	public void timerInterrupt() {
+		boolean intStatus = Machine.interrupt().disable(); // Disable interrupts
+		long currentTime = Machine.timer().getTime();
+		
+		while (!wakeTimeQueue.isEmpty() && wakeTimeQueue.peek() <= currentTime) {
+			
+			wakeTimeQueue.poll(); // Remove from wakeTimeQueue
+			
+			KThread qFrontThread = sleepingThreads.poll(); // Get thread
+			
+			if (qFrontThread != null) {
+				qFrontThread.ready(); // Move to ready queue
+			}
+		}
 
+        KThread.currentThread().yield(); // Yield the current thread
+        Machine.interrupt().restore(intStatus); // Restore interrupts
+    }
+	
     /**
      * Put the current thread to sleep for at least <i>x</i> ticks,
      * waking it up in the timer interrupt handler. The thread must be
@@ -44,10 +69,17 @@ public class Alarm {
      *
      * @see	nachos.machine.Timer#getTime()
      */
-    public void waitUntil(long x) {
-	// for now, cheat just to get something working (busy waiting is bad)
-	long wakeTime = Machine.timer().getTime() + x;
-	while (wakeTime > Machine.timer().getTime())
-	    KThread.yield();
-    }
+	
+	public void waitUntil(long x) {
+		if (x <= 0) return; // No need to sleep if x is zero or negative
+		
+		boolean intStatus = Machine.interrupt().disable(); // Disable interrupts
+		long wakeTime = Machine.timer().getTime() + x;
+		
+		wakeTimeQueue.add(wakeTime); // Add the wake time to the queue
+		sleepingThreads.add(KThread.currentThread()); // Store the thread at the same index
+		
+		KThread.currentThread().sleep(); // Put the current thread to sleep
+		Machine.interrupt().restore(intStatus); // Restore interrupts
+	}
 }
